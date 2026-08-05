@@ -218,21 +218,13 @@ cmd_maps_list() {
 
         echo ""
         echo "  $mapname"
-        echo "    1. Edit tags"
-        echo "    2. Remove from favorites"
-        echo "    3. Copy map name to clipboard"
+        echo "    1. Copy map name to clipboard"
+        echo "    2. Edit tags"
+        echo "    3. Remove from favorites"
         echo "    q. Back"
         read -r -p "  Action: " action
 
         if [[ "$action" == "1" ]]; then
-            python3 "$MAPS" --archive-dir "$ARCHIVE_DIR" tags "$mapname"
-            echo ""
-            read -r -p "Press Enter to continue..." _
-        elif [[ "$action" == "2" ]]; then
-            python3 "$MAPS" --archive-dir "$ARCHIVE_DIR" remove "$mapname"
-            echo ""
-            read -r -p "Press Enter to continue..." _
-        elif [[ "$action" == "3" ]]; then
             if command -v wl-copy &>/dev/null; then
                 echo -n "$mapname" | wl-copy
             elif command -v xclip &>/dev/null; then
@@ -243,6 +235,14 @@ cmd_maps_list() {
                 echo "No clipboard tool found (install wl-clipboard or xclip)."
                 echo "Map name: $mapname"
             fi
+            echo ""
+            read -r -p "Press Enter to continue..." _
+        elif [[ "$action" == "2" ]]; then
+            python3 "$MAPS" --archive-dir "$ARCHIVE_DIR" tags "$mapname"
+            echo ""
+            read -r -p "Press Enter to continue..." _
+        elif [[ "$action" == "3" ]]; then
+            python3 "$MAPS" --archive-dir "$ARCHIVE_DIR" remove "$mapname"
             echo ""
             read -r -p "Press Enter to continue..." _
         fi

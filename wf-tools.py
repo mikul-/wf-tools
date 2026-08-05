@@ -561,9 +561,9 @@ def cmd_maps_list(archive_dir):
             continue
 
         print(f"\n  {info['name']}")
-        print("    1. Edit tags")
-        print("    2. Remove from favorites")
-        print("    3. Copy map name to clipboard")
+        print("    1. Copy map name to clipboard")
+        print("    2. Edit tags")
+        print("    3. Remove from favorites")
         print("    q. Back")
         try:
             action = input("  Action: ").strip().lower()
@@ -571,6 +571,8 @@ def cmd_maps_list(archive_dir):
             continue
 
         if action == "1":
+            _copy_to_clipboard(info["name"])
+        elif action == "2":
             new_tags = _tag_prompt(info["name"], info["tags"])
             if new_tags is None:
                 print("  Cancelled.")
@@ -578,14 +580,12 @@ def cmd_maps_list(archive_dir):
             info["tags"] = new_tags
             _save_maps(maps, _load_maps(archive_dir)[1])
             print(f"\n  Updated '{info['name']}' tags: {', '.join(new_tags)}")
-        elif action == "2":
+        elif action == "3":
             if confirm(f"  Remove '{info['name']}'?"):
                 maps.remove(info)
                 maps_path = _load_maps(archive_dir)[1]
                 _save_maps(maps, maps_path)
                 print(f"  Removed '{info['name']}'.")
-        elif action == "3":
-            _copy_to_clipboard(info["name"])
 
 
 def cmd_maps_menu(demo_dir, archive_dir):
