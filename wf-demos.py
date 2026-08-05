@@ -10,6 +10,7 @@ Or via launcher:  wf-demos.bat
 import os
 import re
 import sys
+import json
 import shutil
 import subprocess
 from datetime import datetime
@@ -352,9 +353,243 @@ def cmd_clear_temp(trash):
         print("Trash cleared.")
 
 
-def cmd_menu(demo_dir, favorites, trash, appid, mod):
-    options = ["save", "list favorites", "clear temp"]
-    print("\n── wf-demos ────────────────────────────────────────────────────────")
+# ── Map favorites ──────────────────────────────────────────────────────────────
+MAP_PREDEFINED = ["rl", "pg", "gl", "slick", "strafe"]
+MAP_AUTO_DETECT = [
+    (re.compile(r"rl|rocket", re.IGNORECASE), "rl"),
+    (re.compile(r"\bpg\b|plasma", re.IGNORECASE), "pg"),
+    (re.compile(r"\bgl\b|nade|grenade", re.IGNORECASE), "gl"),
+    (re.compile(r"slick|sl1ck|s1ick", re.IGNORECASE), "slick"),
+]
+
+
+def _load_maps(archive_dir):
+    path = Path(archive_dir) / "maps.json"
+    if path.exists():
+        try:
+            with open(path, "r") as f:
+                data = json.load(f)
+            return data.get("maps", []), path
+        except (json.JSONDecodeError, IOError):
+            pass
+    return [], path
+
+
+def _save_maps(maps, path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        json.dump({"maps": maps}, f, indent=2)
+        f.write("\n")
+
+
+def _find_map(maps, name):
+    for i, m in enumerate(maps):
+        if m["name"] == name:
+            return i, m
+    return None, None
+
+
+def _auto_suggest(mapname):
+    suggested = set()
+    for pattern, tag in MAP_AUTO_DETECT:
+        if pattern.search(mapname):
+            suggested.add(tag)
+    if not suggested:
+        suggested.add("strafe")
+    return sorted(suggested)
+
+
+def _tag_prompt(mapname, current_tags=None):
+    tags = set(current_tags) if current_tags else set(_auto_suggest(mapname))
+
+    while True:
+        print(f"\n  Map: {mapname}")
+        print(f"  Current tags: {', '.join(sorted(tags)) if tags else '(none)'}")
+        print()
+        print("  Predefined tags (toggle with number):")
+        for i, tag in enumerate(MAP_PREDEFINED, 1):
+            mark = "x" if tag in tags else " "
+            print(f"    {i}. [{mark}] {tag}")
+        print()
+        print("  Commands:")
+        print("    <number>  — toggle predefined tag")
+        print("    +<tag>    — add custom tag")
+        print("    -<tag>    — remove tag")
+        print("    =/enter   — done, save")
+        print("    q         — cancel")
+        try:
+            raw = input("\n  > ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return None
+
+        if raw in ("", "="):
+            if tags:
+                return sorted(tags)
+            print("  At least one tag is required.")
+            continue
+
+        if raw.lower() == "q":
+            return None
+
+        if raw.startswith("+"):
+            tag = raw[1:].strip().lower()
+            if tag:
+                tags.add(tag)
+            continue
+
+        if raw.startswith("-"):
+            tag = raw[1:].strip().lower()
+            tags.discard(tag)
+            continue
+
+        try:
+            idx = int(raw) - 1
+            if 0 <= idx < len(MAP_PREDEFINED):
+                tag = MAP_PREDEFINED[idx]
+                if tag in tags:
+                    tags.discard(tag)
+                else:
+                    tags.add(tag)
+                continue
+        except ValueError:
+            pass
+
+        print("  Invalid input.")
+
+
+def cmd_maps_save(demo_dir, archive_dir):
+    demos = sorted(Path(demo_dir).glob("run_*.wfdz*"))
+    if not demos:
+        print(f"\nNo run_*.wfdz* demos found in:\n  {demo_dir}")
+        print("Join a race server to start recording.")
+        return
+
+    infos = [get_demo_info(d) for d in demos]
+
+    print("\n── Rolling buffer ──────────────────────────────────────────────────")
+    print(f"  {'':>3}  {'map':<40}")
+    print()
+    info = pick(infos, prompt="Save map from demo",
+                label_fn=lambda i: f"{i['mapname']:<40}")
+    if info is None:
+        return
+
+    mapname = info["mapname"]
+    maps, path = _load_maps(archive_dir)
+
+    _, existing = _find_map(maps, mapname)
+    if existing:
+        print(f"\n  '{mapname}' is already in favorites with tags: {', '.join(existing['tags'])}")
+        if not confirm("  Edit tags?"):
+            return
+        tags = _tag_prompt(mapname, existing["tags"])
+    else:
+        tags = _tag_prompt(mapname)
+
+    if tags is None:
+        print("  Cancelled.")
+        return
+
+    if existing:
+        existing["tags"] = tags
+        print(f"\n  Updated '{mapname}' tags: {', '.join(tags)}")
+    else:
+        maps.append({
+            "name": mapname,
+            "tags": tags,
+            "date_added": datetime.now().strftime("%Y-%m-%d"),
+        })
+        maps.sort(key=lambda m: m["name"])
+        print(f"\n  Added '{mapname}' with tags: {', '.join(tags)}")
+
+    _save_maps(maps, path)
+
+
+def cmd_maps_list(archive_dir):
+    while True:
+        maps, _ = _load_maps(archive_dir)
+        if not maps:
+            print("\nNo maps in favorites.")
+            return
+
+        filter_options = ["all", "rl", "pg", "gl", "slick", "strafe", ".. back"]
+        print("\n── Filter by tag ───────────────────────────────────────────────────")
+        tag_choice = pick(filter_options, prompt="Filter", label_fn=str)
+        if tag_choice is None or tag_choice == ".. back":
+            return
+
+        filtered = maps
+        if tag_choice != "all":
+            filtered = [m for m in maps if tag_choice in m["tags"]]
+
+        if not filtered:
+            print("\nNo maps match that tag.")
+            try:
+                input("Press Enter to continue...")
+            except (EOFError, KeyboardInterrupt):
+                pass
+            continue
+
+        def map_label(m):
+            return f"{m['name']:<40}  {', '.join(m['tags'])}"
+
+        print(f"\n── Maps ({tag_choice}) ──────────────────────────────────────────────────")
+        info = pick(filtered, prompt="Select map", label_fn=map_label)
+        if info is None:
+            continue
+
+        print(f"\n  {info['name']}  [{', '.join(info['tags'])}]")
+        print("    1. Edit tags")
+        print("    2. Remove from favorites")
+        print("    q. Back")
+        try:
+            action = input("  Action: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            continue
+
+        if action == "1":
+            new_tags = _tag_prompt(info["name"], info["tags"])
+            if new_tags is None:
+                print("  Cancelled.")
+                continue
+            info["tags"] = new_tags
+            _save_maps(maps, _load_maps(archive_dir)[1])
+            print(f"\n  Updated '{info['name']}' tags: {', '.join(new_tags)}")
+        elif action == "2":
+            if confirm(f"  Remove '{info['name']}'?"):
+                maps.remove(info)
+                maps_path = _load_maps(archive_dir)[1]
+                _save_maps(maps, maps_path)
+                print(f"  Removed '{info['name']}'.")
+
+
+def cmd_maps_menu(demo_dir, archive_dir):
+    options = ["list favorites", "save map to favorites", ".. back"]
+    print("\n── Maps ────────────────────────────────────────────────────────────")
+    choice = pick(options, prompt="Choose", label_fn=str)
+    if choice == "list favorites":
+        cmd_maps_list(archive_dir)
+    elif choice == "save map to favorites":
+        cmd_maps_save(demo_dir, archive_dir)
+
+
+def cmd_menu(demo_dir, favorites, trash, archive_dir, appid, mod):
+    while True:
+        options = ["demos", "maps"]
+        print("\n── wf-demos ────────────────────────────────────────────────────────")
+        choice = pick(options, prompt="Choose", label_fn=str)
+        if choice is None:
+            return
+        if choice == "demos":
+            _cmd_demos_menu(demo_dir, favorites, trash, appid, mod)
+        elif choice == "maps":
+            cmd_maps_menu(demo_dir, archive_dir)
+
+
+def _cmd_demos_menu(demo_dir, favorites, trash, appid, mod):
+    options = ["save", "list favorites", "clear temp", ".. back"]
+    print("\n── Demos ───────────────────────────────────────────────────────────")
     choice = pick(options, prompt="Choose", label_fn=str)
     if choice == "save":
         cmd_save(demo_dir, favorites)
@@ -525,11 +760,13 @@ def main():
     if args and args[0] in ("-h", "--help", "help"):
         print(__doc__)
         print("Commands:")
-        print("  (none) / menu    interactive menu")
+        print("  (none) / menu    interactive menu (demos / maps)")
         print("  save             pick a rolling buffer slot → save to favorites")
         print("  list             browse favorites (play or trash)")
         print("  play <slot>      play a slot directly (e.g. run_05)")
         print("  clear-temp       permanently delete trashed demos")
+        print("  maps-save        pick a demo → save map name + tags to maps.json")
+        print("  maps-list        browse map favorites (filter by tag)")
         print("  --setup          run the setup wizard")
         return
 
@@ -560,7 +797,11 @@ def main():
     elif cmd == "clear-temp":
         cmd_clear_temp(trash)
     elif cmd in ("menu", ""):
-        cmd_menu(demo_dir, favorites, trash, appid, mod)
+        cmd_menu(demo_dir, favorites, trash, archive, appid, mod)
+    elif cmd == "maps-save":
+        cmd_maps_save(demo_dir, archive)
+    elif cmd == "maps-list":
+        cmd_maps_list(archive)
     else:
         print(f"Unknown command: {cmd}")
         print("Run  python wf-demos.py --help  for usage.")
