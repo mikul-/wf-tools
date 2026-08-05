@@ -209,6 +209,27 @@ def confirm(prompt):
         return False
 
 
+def _copy_to_clipboard(text):
+    if sys.platform == "win32":
+        result = subprocess.run(["clip"], input=text, text=True, capture_output=True)
+        if result.returncode == 0:
+            print(f"  Copied to clipboard: {text}")
+        else:
+            print(f"  Clipboard copy failed. Map name: {text}")
+        return
+    for cmd, args in [
+        ("wl-copy", []),
+        ("xclip", ["-selection", "clipboard"]),
+        ("xsel", ["-b"]),
+    ]:
+        if shutil.which(cmd):
+            result = subprocess.run([cmd, *args], input=text, text=True, capture_output=True)
+            if result.returncode == 0:
+                print(f"  Copied to clipboard: {text}")
+                return
+    print(f"  No clipboard tool found. Map name: {text}")
+
+
 def sanitize(name):
     return re.sub(r"[^a-zA-Z0-9_-]", "_", name)
 
@@ -542,6 +563,7 @@ def cmd_maps_list(archive_dir):
         print(f"\n  {info['name']}")
         print("    1. Edit tags")
         print("    2. Remove from favorites")
+        print("    3. Copy map name to clipboard")
         print("    q. Back")
         try:
             action = input("  Action: ").strip().lower()
@@ -562,6 +584,8 @@ def cmd_maps_list(archive_dir):
                 maps_path = _load_maps(archive_dir)[1]
                 _save_maps(maps, maps_path)
                 print(f"  Removed '{info['name']}'.")
+        elif action == "3":
+            _copy_to_clipboard(info["name"])
 
 
 def cmd_maps_menu(demo_dir, archive_dir):
