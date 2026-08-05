@@ -109,7 +109,7 @@ wf-tools
 │   └── clear temp
 │   └── .. back
 └── maps
-    ├── list favorites    (filter by tag → edit tags / remove)
+    ├── list favorites    (filter by tag → copy/edit/remove)
     └── save map to favorites
     └── .. back
 ```
@@ -126,7 +126,7 @@ wf-tools
    - Press Enter or `=` when done
 5. Map is saved to `maps.json`
 
-To browse: **maps** → **list favorites** → filter by tag (`all`, `rl`, `pg`, `gl`, `slick`, `strafe`, `.. back`) → pick a map → edit tags or remove.
+To browse: **maps** → **list favorites** → filter by tag → pick a map → copy name to clipboard, edit tags, or remove.
 
 ### Windows
 
