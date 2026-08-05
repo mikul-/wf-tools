@@ -202,7 +202,7 @@ cmd_maps_list() {
 
         mapfile -t result < <(
             printf '%s\n' "${map_lines[@]}" \
-                | awk -F'\t' '{printf "%s\t%-40s  %s\n", $1, $2, $3}' \
+                | awk -F'\t' '{printf "%s\t%-40s - %s\n", $1, $1, $2}' \
                 | fzf --delimiter $'\t' \
                       --with-nth 2 \
                       --header "map                                          tags" \
@@ -214,10 +214,10 @@ cmd_maps_list() {
         selected="${result[0]}"
         [[ -z "$selected" ]] && continue
 
-        IFS=$'\t' read -r mapname tags <<< "$selected"
+        IFS=$'\t' read -r mapname _ <<< "$selected"
 
         echo ""
-        echo "  $mapname  [$tags]"
+        echo "  $mapname"
         echo "    1. Edit tags"
         echo "    2. Remove from favorites"
         echo "    q. Back"

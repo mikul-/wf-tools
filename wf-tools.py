@@ -532,14 +532,14 @@ def cmd_maps_list(archive_dir):
             continue
 
         def map_label(m):
-            return f"{m['name']:<40}  {', '.join(m['tags'])}"
+            return f"{m['name']:<40} - {', '.join(m['tags'])}"
 
         print(f"\n── Maps ({tag_choice}) ──────────────────────────────────────────────────")
         info = pick(filtered, prompt="Select map", label_fn=map_label)
         if info is None:
             continue
 
-        print(f"\n  {info['name']}  [{', '.join(info['tags'])}]")
+        print(f"\n  {info['name']}")
         print("    1. Edit tags")
         print("    2. Remove from favorites")
         print("    q. Back")
