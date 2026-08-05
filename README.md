@@ -5,7 +5,7 @@ Demo recording, archive, and map-favorites tool for [Warfork](https://store.stea
 Built on top of [wf-demos](https://github.com/mikul-/wf-demos) — adds map favorites with tag-based filtering alongside the existing demo management features.
 
 - **Linux** — `wf-tools` (bash), interactive picker powered by `fzf`
-- **Windows** — `wf-demos.py` / `wf-demos.bat` (Python), numbered terminal menu
+- **Windows** — `wf-tools.py` / `wf-tools.bat` (Python), numbered terminal menu
 
 ## Features
 
@@ -78,10 +78,10 @@ It then installs `~/.local/bin/wf-tools`, `~/.local/bin/wf-demo-info`, and `~/.l
 ```
 git clone https://github.com/mikul-/wf-tools.git
 cd wf-tools
-python wf-demos.py --setup
+python wf-tools.py --setup
 ```
 
-Or download the zip and run `wf-demos.bat` (which calls `python wf-demos.py`).
+Or download the zip and run `wf-tools.bat` (which calls `python wf-tools.py`).
 
 ---
 
@@ -131,14 +131,16 @@ To browse: **maps** → **list favorites** → filter by tag (`all`, `rl`, `pg`,
 ### Windows
 
 ```
-wf-demos.bat                    interactive menu
-wf-demos.bat save               numbered list of rolling buffer → pick to save
-wf-demos.bat list               numbered list of favorites → pick to play or trash
-wf-demos.bat play run_05        play a rolling buffer slot directly
-wf-demos.bat clear-temp         permanently delete all files in trash\
+wf-tools.bat                    interactive menu (demos / maps)
+wf-tools.bat save               numbered list of rolling buffer → pick to save
+wf-tools.bat list               numbered list of favorites → pick to play or trash
+wf-tools.bat play run_05        play a rolling buffer slot directly
+wf-tools.bat clear-temp         permanently delete all files in trash\
+wf-tools.bat maps-save          pick a demo → save map name + tags to maps.json
+wf-tools.bat maps-list          browse map favorites (filter by tag)
 ```
 
-Or call Python directly: `python wf-demos.py [command]`
+Or call Python directly: `python wf-tools.py [command]`
 
 ---
 
@@ -243,8 +245,10 @@ You always get to confirm or edit tags before saving. Custom tags (e.g. `hard`, 
 
 | Path | Purpose |
 |------|---------|
-| `wf-demos.py` | Main CLI (run from repo folder) |
-| `wf-demos.bat` | Launcher — calls `python wf-demos.py %*` |
+| `wf-tools.py` | Main CLI (run from repo folder) |
+| `wf-tools.bat` | Launcher — calls `python wf-tools.py %*` |
+| `wf-demos.py` | Backward-compat wrapper → wf-tools.py |
+| `wf-demos.bat` | Backward-compat launcher |
 | `%APPDATA%\wf-demos\config` | User config |
 | `Documents\wf-demos\favorites\` | Saved demos |
 | `Documents\wf-demos\trash\` | Trashed demos |
