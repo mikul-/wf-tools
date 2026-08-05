@@ -1,0 +1,142 @@
+#!/usr/bin/env python3
+"""
+Parse Warfork .wfdz demo headers and race finish times.
+
+Output (tab-separated):
+  filename  mapname  time_display  date  race_time  full_path
+
+  time_display  — race finish time if found (e.g. 0m32.529s),
+                  otherwise total demo duration prefixed with ~ (e.g. ~0m38s)
+  race_time     — race finish time for use in filenames, or empty string
+"""
+import sys
+import os
+import re
+from datetime import datetime
+
+TAIL_SIZE = 32768   # bytes to read from end of file when searching for finish time
+
+
+def parse_header(path):
+    try:
+        with open(path, 'rb') as f:
+            data = f.read(512)
+    except (IOError, OSError):
+        return {}
+
+    start = data.find(b'hostname\x00')
+    if start == -1:
+        return {}
+
+    result, pos = {}, start
+    while pos < len(data):
+        nk = data.find(b'\x00', pos)
+        if nk <= pos:
+            break
+        key = data[pos:nk].decode('latin-1', errors='replace')
+        pos = nk + 1
+        nv = data.find(b'\x00', pos)
+        if nv == -1:
+            break
+        val = data[pos:nv].decode('latin-1', errors='replace')
+        result[key] = val
+        pos = nv + 1
+        if pos < len(data) and data[pos:pos+1] == b'\x00':
+            break
+
+    return result
+
+
+def find_player_name(path):
+    try:
+        with open(path, 'rb') as f:
+            data = f.read(65536)
+    except (IOError, OSError):
+        return None
+    match = re.search(rb'\\name\\([^\\"\x00]+)', data)
+    if not match:
+        return None
+    name = match.group(1).decode('latin-1', errors='replace')
+    return re.sub(r'\^.', '', name)
+
+
+def find_finish_time(path):
+    """
+    Search the end of the demo for a race finish time.
+    Returns a string like '0m32.529s' or None.
+    Warfork racemod sends: pr "^8End: ^7MM:SS.mmm ^8/ ..."
+    """
+    try:
+        with open(path, 'rb') as f:
+            f.seek(0, 2)
+            size = f.tell()
+            f.seek(-min(TAIL_SIZE, size), 2)
+            tail = f.read()
+    except (IOError, OSError):
+        return None
+
+    # Strip Warfork color codes (^N where N is any character)
+    tail_clean = re.sub(rb'\^.', b'', tail)
+
+    match = re.search(rb'End: (\d{2}:\d{2}\.\d{3})', tail_clean)
+    if not match:
+        return None
+
+    time_str = match.group(1).decode('ascii')   # e.g. '00:32.529'
+    m = re.match(r'(\d+):(\d{2})\.(\d{3})', time_str)
+    if not m:
+        return None
+
+    mins = int(m.group(1))
+    secs = int(m.group(2))
+    ms   = m.group(3)
+    return f"{mins}m{secs:02d}.{ms}s"
+
+
+def fmt_duration(secs_str):
+    try:
+        s = int(float(secs_str))
+    except (ValueError, TypeError):
+        return "?m??s"
+    return f"{s // 60}m{s % 60:02d}s"
+
+
+def fmt_date(ts_str, fallback_path=None):
+    try:
+        ts = int(ts_str)
+        if ts > 0:
+            return datetime.fromtimestamp(ts).strftime('%Y-%m-%d')
+    except (ValueError, TypeError, OSError):
+        pass
+    if fallback_path:
+        try:
+            return datetime.fromtimestamp(os.path.getmtime(fallback_path)).strftime('%Y-%m-%d')
+        except OSError:
+            pass
+    return "unknown"
+
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: wf-demo-info <demo.wfdz22> [...]", file=sys.stderr)
+        sys.exit(1)
+
+    for path in sys.argv[1:]:
+        if not os.path.isfile(path):
+            continue
+        info       = parse_header(path)
+        fname      = os.path.basename(path)
+        mapname    = info.get('mapname') or os.path.splitext(os.path.basename(path))[0]
+        duration   = fmt_duration(info.get('duration', '0'))
+        date       = fmt_date(info.get('localtime', '0'), fallback_path=path)
+        race_time  = find_finish_time(path)
+        player     = find_player_name(path) or 'unknown'
+
+        # time_display: show race time when available, total duration otherwise
+        time_display = race_time if race_time else f"~{duration}"
+
+        print(f"{fname}\t{mapname}\t{time_display}\t{date}\t{race_time or ''}\t{player}\t{path}")
+
+
+if __name__ == '__main__':
+    main()

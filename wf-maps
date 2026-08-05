@@ -1,0 +1,244 @@
+#!/usr/bin/env python3
+"""
+wf-maps — manage Warfork map favorites with tags.
+  wf-maps --archive-dir <dir> add <mapname>
+  wf-maps --archive-dir <dir> list [-t <tag>]
+  wf-maps --archive-dir <dir> remove <mapname>
+  wf-maps --archive-dir <dir> tags <mapname>
+"""
+import json
+import os
+import re
+import sys
+import argparse
+from datetime import datetime
+from pathlib import Path
+
+
+PREDEFINED_TAGS = ["rl", "pg", "gl", "slick", "strafe"]
+
+AUTO_DETECT = [
+    (re.compile(r"rl|rocket", re.IGNORECASE), "rl"),
+    (re.compile(r"\bpg\b|plasma", re.IGNORECASE), "pg"),
+    (re.compile(r"\bgl\b|nade|grenade", re.IGNORECASE), "gl"),
+    (re.compile(r"slick|sl1ck|s1ick", re.IGNORECASE), "slick"),
+]
+
+
+def load_maps(archive_dir):
+    path = Path(archive_dir) / "maps.json"
+    if path.exists():
+        try:
+            with open(path, "r") as f:
+                data = json.load(f)
+            return data.get("maps", []), path
+        except (json.JSONDecodeError, IOError):
+            pass
+    return [], path
+
+
+def save_maps(maps, path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        json.dump({"maps": maps}, f, indent=2)
+        f.write("\n")
+
+
+def find_map(maps, name):
+    for i, m in enumerate(maps):
+        if m["name"] == name:
+            return i, m
+    return None, None
+
+
+def auto_suggest(mapname):
+    suggested = set()
+    for pattern, tag in AUTO_DETECT:
+        if pattern.search(mapname):
+            suggested.add(tag)
+    if not suggested:
+        suggested.add("strafe")
+    return sorted(suggested)
+
+
+def tag_prompt(mapname):
+    suggested = auto_suggest(mapname)
+    tags = set(suggested)
+
+    while True:
+        print(f"\n  Map: {mapname}")
+        print(f"  Current tags: {', '.join(sorted(tags)) if tags else '(none)'}")
+        print()
+        print("  Predefined tags (toggle with number):")
+        for i, tag in enumerate(PREDEFINED_TAGS, 1):
+            mark = "x" if tag in tags else " "
+            print(f"    {i}. [{mark}] {tag}")
+        print()
+        print("  Commands:")
+        print("    <number>  — toggle predefined tag")
+        print("    +<tag>    — add custom tag")
+        print("    -<tag>    — remove tag")
+        print("    =/enter   — done, save")
+        print("    q         — cancel (only for new maps)")
+        try:
+            raw = input("\n  > ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return None
+
+        if raw in ("", "="):
+            if tags:
+                return sorted(tags)
+            print("  At least one tag is required.")
+            continue
+
+        if raw.lower() == "q":
+            return None
+
+        if raw.startswith("+"):
+            tag = raw[1:].strip().lower()
+            if tag:
+                tags.add(tag)
+            continue
+
+        if raw.startswith("-"):
+            tag = raw[1:].strip().lower()
+            tags.discard(tag)
+            continue
+
+        try:
+            idx = int(raw) - 1
+            if 0 <= idx < len(PREDEFINED_TAGS):
+                tag = PREDEFINED_TAGS[idx]
+                if tag in tags:
+                    tags.discard(tag)
+                else:
+                    tags.add(tag)
+                continue
+        except ValueError:
+            print("  Invalid input.")
+            continue
+
+        print("  Invalid input.")
+
+
+def cmd_add(archive_dir, mapname):
+    maps, path = load_maps(archive_dir)
+
+    idx, existing = find_map(maps, mapname)
+    if existing:
+        print(f"\n  '{mapname}' is already in favorites with tags: {', '.join(existing['tags'])}")
+        try:
+            ans = input("  Edit tags? [y/N]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return
+        if ans != "y":
+            return
+
+    tags = tag_prompt(mapname)
+    if tags is None:
+        print("  Cancelled.")
+        return
+
+    if existing:
+        existing["tags"] = tags
+        print(f"\n  Updated '{mapname}' tags: {', '.join(tags)}")
+    else:
+        maps.append({
+            "name": mapname,
+            "tags": tags,
+            "date_added": datetime.now().strftime("%Y-%m-%d"),
+        })
+        maps.sort(key=lambda m: m["name"])
+        print(f"\n  Added '{mapname}' with tags: {', '.join(tags)}")
+
+    save_maps(maps, path)
+
+
+def cmd_list(archive_dir, filter_tag=None):
+    maps, _ = load_maps(archive_dir)
+
+    if filter_tag:
+        maps = [m for m in maps if filter_tag in m["tags"]]
+
+    if not maps:
+        print("  No maps found.")
+        return
+
+    for m in maps:
+        tags = ", ".join(m["tags"])
+        print(f"{m['name']}\t{tags}\t{m['date_added']}")
+
+
+def cmd_remove(archive_dir, mapname):
+    maps, path = load_maps(archive_dir)
+
+    idx, existing = find_map(maps, mapname)
+    if not existing:
+        print(f"  '{mapname}' is not in favorites.")
+        sys.exit(1)
+
+    tags = ", ".join(existing["tags"])
+    try:
+        ans = input(f"\n  Remove '{mapname}' [{tags}]? [y/N]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return
+
+    if ans == "y":
+        del maps[idx]
+        save_maps(maps, path)
+        print(f"  Removed '{mapname}'.")
+
+
+def cmd_tags(archive_dir, mapname):
+    maps, path = load_maps(archive_dir)
+
+    idx, existing = find_map(maps, mapname)
+    if not existing:
+        print(f"  '{mapname}' is not in favorites.")
+        sys.exit(1)
+
+    tags = tag_prompt(mapname)
+    if tags is None:
+        print("  Cancelled.")
+        return
+
+    existing["tags"] = tags
+    save_maps(maps, path)
+    print(f"\n  Updated '{mapname}' tags: {', '.join(tags)}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Manage Warfork map favorites")
+    parser.add_argument("--archive-dir", required=True, help="Archive directory path")
+    parser.add_argument("command", choices=["add", "list", "remove", "tags"])
+    parser.add_argument("arg", nargs="?", help="Map name (for add/remove/tags)")
+    parser.add_argument("-t", "--tag", help="Filter by tag (for list)")
+    args = parser.parse_args()
+
+    if args.command == "add":
+        if not args.arg:
+            print("Usage: wf-maps --archive-dir <dir> add <mapname>", file=sys.stderr)
+            sys.exit(1)
+        cmd_add(args.archive_dir, args.arg)
+
+    elif args.command == "list":
+        cmd_list(args.archive_dir, args.tag)
+
+    elif args.command == "remove":
+        if not args.arg:
+            print("Usage: wf-maps --archive-dir <dir> remove <mapname>", file=sys.stderr)
+            sys.exit(1)
+        cmd_remove(args.archive_dir, args.arg)
+
+    elif args.command == "tags":
+        if not args.arg:
+            print("Usage: wf-maps --archive-dir <dir> tags <mapname>", file=sys.stderr)
+            sys.exit(1)
+        cmd_tags(args.archive_dir, args.arg)
+
+
+if __name__ == "__main__":
+    main()

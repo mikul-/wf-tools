@@ -1,0 +1,362 @@
+#!/usr/bin/env bash
+# wf-tools — Warfork demo + map archive CLI
+# Requires: bash 4+, fzf, python3, steam
+# https://github.com/mikul-/wf-tools
+
+# ── Defaults ──────────────────────────────────────────────────────────────
+DEMO_DIR="${HOME}/.local/share/warfork-2.1/racemod_2.1/demos"
+ARCHIVE_DIR="${HOME}/demos"
+APPID=671610
+WF_MOD=racemod_2.1
+
+# ── Load user config (overrides defaults) ─────────────────────────────────
+CONFIG="${XDG_CONFIG_HOME:-${HOME}/.config}/wf-demos/config"
+# shellcheck source=/dev/null
+[[ -f "$CONFIG" ]] && source "$CONFIG"
+
+FAVORITES="${ARCHIVE_DIR}/favorites"
+TRASH="${ARCHIVE_DIR}/trash"
+
+# ── Locate helpers ────────────────────────────────────────────────────────
+_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [[ -x "$_SCRIPT_DIR/wf-demo-info" ]]; then
+    PARSER="$_SCRIPT_DIR/wf-demo-info"
+else
+    PARSER="${HOME}/.local/bin/wf-demo-info"
+fi
+
+if [[ -x "$_SCRIPT_DIR/wf-maps" ]]; then
+    MAPS="$_SCRIPT_DIR/wf-maps"
+else
+    MAPS="${HOME}/.local/bin/wf-maps"
+fi
+
+# ── Helpers ───────────────────────────────────────────────────────────────
+die() { echo "Error: $*" >&2; exit 1; }
+
+[[ -x "$PARSER" ]] || die "wf-demo-info not found. Run install.sh first."
+[[ -x "$MAPS" ]]   || die "wf-maps not found. Run install.sh first."
+
+# ── Demos sub-commands ────────────────────────────────────────────────────
+cmd_demos_save() {
+    mapfile -t demos < <(find "$DEMO_DIR" -maxdepth 1 -name 'run_*.wfdz*' -type f 2>/dev/null | sort)
+    if [[ ${#demos[@]} -eq 0 ]]; then
+        echo "No run_*.wfdz* demos found in $DEMO_DIR"
+        echo "Join a race server to start recording."
+        return
+    fi
+    mkdir -p "$FAVORITES"
+
+    selection=$(python3 "$PARSER" "${demos[@]}" | cut -f1-4 \
+        | fzf --delimiter $'\t' \
+              --header "slot           map                               time      recorded" \
+              --prompt "Save demo > " \
+              --height "~50%") || return
+
+    IFS=$'\t' read -ra fields <<< "$selection"
+    mapname="${fields[1]//[^a-zA-Z0-9_-]/_}"
+    dt="${fields[3]//-/}"
+
+    src=""
+    for f in "${demos[@]}"; do
+        [[ "$(basename "$f")" == "${fields[0]}" ]] && src="$f" && break
+    done
+    if [[ -z "$src" ]]; then
+        echo "Error: could not find ${fields[0]} in $DEMO_DIR" >&2; return
+    fi
+
+    _info=$(python3 "$PARSER" "$src" 2>/dev/null)
+    race_time=$(echo "$_info" | cut -f5)
+    player=$(echo "$_info" | cut -f6 | tr -dc 'a-zA-Z0-9_-')
+
+    ext=""
+    [[ "$src" =~ (\.wfdz[a-zA-Z0-9_]*)$ ]] && ext="${BASH_REMATCH[1]}"
+    _prefix="${player:+${player}_}${mapname}"
+    if [[ -n "$race_time" ]]; then
+        dest="${FAVORITES}/${_prefix}_${race_time}_${dt}${ext}"
+    else
+        dest="${FAVORITES}/${_prefix}_${dt}${ext}"
+    fi
+
+    if [[ -f "$dest" ]]; then
+        echo "Already exists: $dest"
+        read -r -p "Overwrite? [y/N] " confirm
+        [[ "$confirm" != y ]] && return
+    fi
+    cp "$src" "$dest"
+    echo "Saved: $dest"
+}
+
+cmd_demos_list() {
+    while true; do
+        mapfile -t favs < <(find "$FAVORITES" -maxdepth 1 -name '*.wfdz*' -type f 2>/dev/null | sort)
+        if [[ ${#favs[@]} -eq 0 ]]; then
+            echo "No favorites in $FAVORITES"
+            return
+        fi
+
+        _header=$(printf '%-16s  %-36s  %-12s  %s' "player" "map" "time" "recorded  (Enter=play, Ctrl-D=trash)")
+        mapfile -t result < <(
+            python3 "$PARSER" "${favs[@]}" \
+                | awk -F'\t' '{printf "%s\t%-16s  %-36s  %-12s  %s\n", $1, $6, $2, $3, $4}' \
+                | fzf --delimiter $'\t' \
+                      --with-nth 2 \
+                      --nth 2 \
+                      --expect "ctrl-d" \
+                      --header "$_header" \
+                      --prompt "Favorites > " \
+                      --height "~50%"
+        ) || return
+
+        [[ ${#result[@]} -lt 2 ]] && return
+        key="${result[0]}"
+        selected="${result[1]}"
+        [[ -z "$selected" ]] && return
+
+        IFS=$'\t' read -ra fields <<< "$selected"
+
+        src=""
+        for f in "${favs[@]}"; do
+            [[ "$(basename "$f")" == "${fields[0]}" ]] && src="$f" && break
+        done
+        if [[ -z "$src" ]]; then
+            echo "Error: could not find ${fields[0]}" >&2; continue
+        fi
+        fname="$(basename "$src")"
+
+        if [[ "$key" == "ctrl-d" ]]; then
+            mkdir -p "$TRASH"
+            mv "$src" "$TRASH/$fname"
+            echo "Moved to trash: $fname"
+            continue
+        fi
+
+        ext=""
+        [[ "$src" =~ (\.wfdz[a-zA-Z0-9_]*)$ ]] && ext="${BASH_REMATCH[1]}"
+        cp "$src" "${DEMO_DIR}/play_tmp${ext}"
+        echo "Playing: ${fields[0]}"
+        steam -applaunch "$APPID" +set fs_game "$WF_MOD" +demo play_tmp &
+        disown $!
+        return
+    done
+}
+
+cmd_demos_cleartemp() {
+    mapfile -t trash_files < <(find "$TRASH" -maxdepth 1 -name '*.wfdz*' -type f 2>/dev/null | sort)
+    if [[ ${#trash_files[@]} -eq 0 ]]; then
+        echo "Trash is empty."
+        return
+    fi
+    echo "Trash contents:"
+    for f in "${trash_files[@]}"; do
+        echo "  $(basename "$f")"
+    done
+    echo ""
+    read -r -p "Permanently delete ${#trash_files[@]} file(s)? [y/N] " confirm
+    if [[ "$confirm" == y ]]; then
+        rm "${trash_files[@]}"
+        echo "Trash cleared."
+    fi
+}
+
+cmd_demos_menu() {
+    while true; do
+        choice=$(printf 'save demo\nlist favorites\nclear temp\n.. back' \
+            | fzf --prompt "demos > " \
+                  --height "~30%" \
+                  --no-info) || return
+        case "$choice" in
+            "save demo")      cmd_demos_save ;;
+            "list favorites") cmd_demos_list ;;
+            "clear temp")     cmd_demos_cleartemp ;;
+            ".. back")        return ;;
+        esac
+    done
+}
+
+# ── Maps sub-commands ─────────────────────────────────────────────────────
+cmd_maps_list() {
+    while true; do
+        tag_choice=$(printf 'all\nrl\npg\ngl\nslick\nstrafe\n.. back' \
+            | fzf --prompt "Filter by tag > " \
+                  --height "~30%" \
+                  --no-info) || return
+
+        [[ -z "$tag_choice" ]] && return
+
+        if [[ "$tag_choice" == ".. back" ]]; then
+            return
+        fi
+
+        local filter_arg=""
+        [[ "$tag_choice" != "all" ]] && filter_arg="-t $tag_choice"
+
+        mapfile -t map_lines < <(python3 "$MAPS" --archive-dir "$ARCHIVE_DIR" list $filter_arg 2>/dev/null)
+        if [[ ${#map_lines[@]} -eq 0 ]]; then
+            echo ""
+            echo "No maps found."
+            read -r -p "Press Enter to continue..." _
+            continue
+        fi
+
+        mapfile -t result < <(
+            printf '%s\n' "${map_lines[@]}" \
+                | awk -F'\t' '{printf "%s\t%-40s  %s\n", $1, $2, $3}' \
+                | fzf --delimiter $'\t' \
+                      --with-nth 2 \
+                      --header "map                                          tags" \
+                      --prompt "Maps ($tag_choice) > " \
+                      --height "~50%"
+        ) || continue
+
+        [[ ${#result[@]} -eq 0 ]] && continue
+        selected="${result[0]}"
+        [[ -z "$selected" ]] && continue
+
+        IFS=$'\t' read -r mapname tags <<< "$selected"
+
+        echo ""
+        echo "  $mapname  [$tags]"
+        echo "    1. Edit tags"
+        echo "    2. Remove from favorites"
+        echo "    q. Back"
+        read -r -p "  Action: " action
+
+        if [[ "$action" == "1" ]]; then
+            python3 "$MAPS" --archive-dir "$ARCHIVE_DIR" tags "$mapname"
+            echo ""
+            read -r -p "Press Enter to continue..." _
+        elif [[ "$action" == "2" ]]; then
+            python3 "$MAPS" --archive-dir "$ARCHIVE_DIR" remove "$mapname"
+            echo ""
+            read -r -p "Press Enter to continue..." _
+        fi
+    done
+}
+
+cmd_maps_save() {
+    mapfile -t demos < <(find "$DEMO_DIR" -maxdepth 1 -name 'run_*.wfdz*' -type f 2>/dev/null | sort)
+    if [[ ${#demos[@]} -eq 0 ]]; then
+        echo "No run_*.wfdz* demos found in $DEMO_DIR"
+        echo "Join a race server to start recording."
+        return
+    fi
+    mkdir -p "$FAVORITES"
+
+    selection=$(python3 "$PARSER" "${demos[@]}" | cut -f1,2 \
+        | fzf --delimiter $'\t' \
+              --with-nth 2 \
+              --header "  map" \
+              --prompt "Save map from demo > " \
+              --height "~50%") || return
+
+    IFS=$'\t' read -ra fields <<< "$selection"
+    mapname="${fields[1]}"
+
+    python3 "$MAPS" --archive-dir "$ARCHIVE_DIR" add "$mapname"
+    echo ""
+    read -r -p "Press Enter to continue..." _
+}
+
+cmd_maps_menu() {
+    while true; do
+        choice=$(printf 'list favorites\nsave map to favorites\n.. back' \
+            | fzf --prompt "maps > " \
+                  --height "~30%" \
+                  --no-info) || return
+        case "$choice" in
+            "list favorites")       cmd_maps_list ;;
+            "save map to favorites") cmd_maps_save ;;
+            ".. back")              return ;;
+        esac
+    done
+}
+
+# ── Main menu ─────────────────────────────────────────────────────────────
+cmd_main() {
+    while true; do
+        choice=$(printf 'demos\nmaps' \
+            | fzf --prompt "wf-tools > " \
+                  --height "~30%" \
+                  --no-info) || exit 0
+        case "$choice" in
+            demos) cmd_demos_menu ;;
+            maps)  cmd_maps_menu ;;
+        esac
+    done
+}
+
+# ── Entry point ───────────────────────────────────────────────────────────
+cmd="${1:-menu}"
+shift 2>/dev/null || true
+
+case "$cmd" in
+    menu)
+        cmd_main
+        ;;
+
+    demos-save)
+        cmd_demos_save
+        ;;
+    demos-list)
+        cmd_demos_list
+        ;;
+    demos-cleartemp|clear-temp)
+        cmd_demos_cleartemp
+        ;;
+
+    maps-list)
+        cmd_maps_list
+        ;;
+    maps-save)
+        cmd_maps_save
+        ;;
+
+    play)
+        name="${1:-}"
+        if [[ -z "$name" ]]; then
+            echo "Usage: wf-tools play <slot>"
+            echo "  Rolling buffer slots: run_00 .. run_09"
+            exit 1
+        fi
+        name="${name%.wfdz*}"
+        name="${name#demos/}"
+        found=""
+        for f in "$DEMO_DIR/$name".wfdz*; do
+            [[ -f "$f" ]] && found="$f" && break
+        done
+        if [[ -z "$found" ]]; then
+            echo "Demo not found: $DEMO_DIR/$name.wfdz*"
+            exit 1
+        fi
+        echo "Playing: $name"
+        steam -applaunch "$APPID" +set fs_game "$WF_MOD" +demo "$name" &
+        disown $!
+        ;;
+
+    help|-h|--help)
+        cat <<'EOF'
+Usage: wf-tools [command]
+
+Commands:
+  wf-tools                  interactive menu (demos / maps)
+  wf-tools demos-save       fzf-pick rolling buffer → favorites/
+  wf-tools demos-list       fzf-browse favorites (Enter=play, Ctrl-D=trash)
+  wf-tools clear-temp       permanently delete all files in trash/
+  wf-tools play N           play a rolling buffer slot directly (e.g. run_05)
+
+  wf-tools maps-list        browse map favorites (filter by tag)
+  wf-tools maps-save         pick a demo → save map name + tags to maps.json
+
+Config: ~/.config/wf-demos/config
+Map data: <ARCHIVE_DIR>/maps.json
+EOF
+        ;;
+
+    *)
+        echo "Unknown command: $cmd" >&2
+        exec "$0" help
+        exit 1
+        ;;
+esac
