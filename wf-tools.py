@@ -376,12 +376,11 @@ def cmd_clear_temp(trash):
 
 # ── Map favorites ──────────────────────────────────────────────────────────────
 MAP_PREDEFINED = ["rl", "pg", "gl", "slick", "strafe"]
-MAP_AUTO_DETECT = [
-    (re.compile(r"rl|rocket", re.IGNORECASE), "rl"),
-    (re.compile(r"\bpg\b|plasma", re.IGNORECASE), "pg"),
-    (re.compile(r"\bgl\b|nade|grenade", re.IGNORECASE), "gl"),
-    (re.compile(r"slick|sl1ck|s1ick", re.IGNORECASE), "slick"),
-]
+
+try:
+    from wf_detector import suggest_tags as _auto_suggest_weapons
+except ImportError:
+    _auto_suggest_weapons = None
 
 
 def _load_maps(archive_dir):
@@ -411,7 +410,16 @@ def _find_map(maps, name):
 
 
 def _auto_suggest(mapname):
+    if _auto_suggest_weapons is not None:
+        return _auto_suggest_weapons(mapname)
+
     suggested = set()
+    MAP_AUTO_DETECT = [
+        (re.compile(r"rl|rocket", re.IGNORECASE), "rl"),
+        (re.compile(r"\bpg\b|plasma", re.IGNORECASE), "pg"),
+        (re.compile(r"\bgl\b|nade|grenade", re.IGNORECASE), "gl"),
+        (re.compile(r"slick|sl1ck|s1ick", re.IGNORECASE), "slick"),
+    ]
     for pattern, tag in MAP_AUTO_DETECT:
         if pattern.search(mapname):
             suggested.add(tag)

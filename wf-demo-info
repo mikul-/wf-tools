@@ -3,11 +3,15 @@
 Parse Warfork .wfdz demo headers and race finish times.
 
 Output (tab-separated):
-  filename  mapname  time_display  date  race_time  full_path
+  filename  mapname  time_display  date  race_time  player  full_path
 
   time_display  — race finish time if found (e.g. 0m32.529s),
                   otherwise total demo duration prefixed with ~ (e.g. ~0m38s)
   race_time     — race finish time for use in filenames, or empty string
+
+Options:
+  --weapon    include weapon tags as an extra column (map name + BSP detection)
+  --tags      output only mapname and detected weapon tags
 """
 import sys
 import os
@@ -15,6 +19,11 @@ import re
 from datetime import datetime
 
 TAIL_SIZE = 32768   # bytes to read from end of file when searching for finish time
+
+try:
+    from wf_detector import detect_weapons
+except ImportError:
+    detect_weapons = None
 
 
 def parse_header(path):
@@ -117,11 +126,16 @@ def fmt_date(ts_str, fallback_path=None):
 
 
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: wf-demo-info <demo.wfdz22> [...]", file=sys.stderr)
+    args = sys.argv[1:]
+    show_weapon = "--weapon" in args
+    tags_only = "--tags" in args
+    paths = [a for a in args if not a.startswith("--")]
+
+    if not paths:
+        print("Usage: wf-demo-info [--weapon] [--tags] <demo.wfdz22> [...]", file=sys.stderr)
         sys.exit(1)
 
-    for path in sys.argv[1:]:
+    for path in paths:
         if not os.path.isfile(path):
             continue
         info       = parse_header(path)
@@ -132,10 +146,23 @@ def main():
         race_time  = find_finish_time(path)
         player     = find_player_name(path) or 'unknown'
 
-        # time_display: show race time when available, total duration otherwise
         time_display = race_time if race_time else f"~{duration}"
 
-        print(f"{fname}\t{mapname}\t{time_display}\t{date}\t{race_time or ''}\t{player}\t{path}")
+        if tags_only:
+            tags = []
+            if detect_weapons is not None:
+                tags = detect_weapons(mapname)["tags"]
+            print(f"{mapname}\t{','.join(tags)}")
+        elif show_weapon:
+            tags = []
+            weapon = ""
+            if detect_weapons is not None:
+                result = detect_weapons(mapname)
+                tags = result["tags"]
+                weapon = result["weapon"] or ""
+            print(f"{fname}\t{mapname}\t{time_display}\t{date}\t{race_time or ''}\t{player}\t{','.join(tags)}\t{weapon}\t{path}")
+        else:
+            print(f"{fname}\t{mapname}\t{time_display}\t{date}\t{race_time or ''}\t{player}\t{path}")
 
 
 if __name__ == '__main__':

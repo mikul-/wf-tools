@@ -253,10 +253,12 @@ mkdir -p "$BIN"
 cp "$SCRIPT_DIR/wf-tools"      "$BIN/wf-tools"
 cp "$SCRIPT_DIR/wf-demo-info"  "$BIN/wf-demo-info"
 cp "$SCRIPT_DIR/wf-maps"       "$BIN/wf-maps"
+cp "$SCRIPT_DIR/wf-detector.py" "$BIN/wf-detector.py"
 chmod +x "$BIN/wf-tools" "$BIN/wf-demo-info" "$BIN/wf-maps"
 success "Installed: $BIN/wf-tools"
 success "Installed: $BIN/wf-demo-info"
 success "Installed: $BIN/wf-maps"
+success "Installed: $BIN/wf-detector.py"
 
 # Also install legacy wf-demos symlink
 ln -sf "$BIN/wf-tools" "$BIN/wf-demos" 2>/dev/null || true
